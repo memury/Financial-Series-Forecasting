@@ -17,7 +17,7 @@ if st.button("Tahmin Et"):
         "MA_5": ma_5
     }
     try:
-        response = requests.post("http://127.0.0.1:8000/tahmin", json=payload)
+        response = requests.post("https://financial-series-forecasting.onrender.com/tahmin", json=payload)
         result = response.json()
         if response.status_code == 200:
             getiri = result.get("tahmin_edilen_getiri_yuzdesi")
