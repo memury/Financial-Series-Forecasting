@@ -21,12 +21,10 @@ def fetch_stock_history_safe(ticker_symbol):
     })
     
     try:
-        # yf.Ticker üzerinden history çağrısı
         ticker_obj = yf.Ticker(clean_symbol, session=session)
         df = ticker_obj.history(period="1mo", interval="1d")
         
         if df.empty:
-            # Alternatif deneme (ABD hisseleri veya düz semboller için)
             df = yf.download(clean_symbol, period="1mo", interval="1d", session=session, progress=False)
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
