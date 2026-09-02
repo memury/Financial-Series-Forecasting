@@ -1,50 +1,57 @@
 import streamlit as st
 import requests
-
-st.title("📈 Borsa Getiri Tahmin Paneli")
-st.write("Model parametrelerini girerek tahmini getiri oranını hesaplayın.")
-
-open_price = st.number_input("Open (Açılış Fiyatı)", value=100.0)
-volume = st.number_input("Volume (Hacim)", value=50000.0)
-close_lag1 = st.number_input("Close_Lag1 (Kapanış Lag1)", value=98.0)
-ma_5 = st.number_input("MA_5 (5 Günlük Hareketli Ortalama)", value=99.0)
-
-if st.button("Tahmin Et"):
-    payload = {
-        "Open": open_price,
-        "Volume": volume,
-        "Close_Lag1": close_lag1,
-        "MA_5": ma_5
-    }
-    try:
-        response = requests.post(# API adresini yerel sunucuya yönlendir:
-url = "http://127.0.0.1:8000/tahmin", json=payload)
-        result = response.json()
-        if response.status_code == 200:
-            getiri = result.get("tahmin_edilen_getiri_yuzdesi")
-            st.success(f"Tahmin Edilen Getiri Yüzdesi: %{getiri}")
-        else:
-            st.error("Tahmin alınırken bir hata oluştu.")
-    except Exception as e:
-        st.error(f"FastAPI sunucusuna bağlanılamadı: {e}")
 import os
+import yfinance as yf
 import pandas as pd
-from sqlalchemy import create_engine
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "predictions.db")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
-st.markdown("---")
-st.subheader("📊 Canlı Tahmin Logları (Veritabanı)")
+st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
+st.write("Canlı veri akışı ve MLflow entegreli tahmin sistemi.")
 
-if st.button("Geçmiş Logları Getir"):
+# 1. Kullanıcıdan Hisse Kodu Al
+ticker = st.text_input("Hisse Sembolü Giriniz (Örn: THYAO.IS, AAPL, MSFT):", value="THYAO.IS")
+
+if st.button("Canlı Veri Çek ve Tahmin Et"):
     try:
-        engine = create_engine(f"sqlite:///{DB_PATH}")
-        df = pd.read_sql("SELECT * FROM prediction_logs ORDER BY id DESC", con=engine)
-        
-        if not df.empty:
-            st.dataframe(df, use_container_width=True)
+        # yfinance ile son 10 günlük veriyi çek
+        stock = yf.Ticker(ticker)
+        df = stock.history(period="10d")
+
+        if len(df) < 5:
+            st.error("Yeterli geçmiş veri bulunamadı.")
         else:
-            st.info("Henüz kayıtlı tahmin yok. Yukarıdan bir tahmin yapın.")
+            # Otomatik Feature Engineering
+            open_price = float(df['Open'].iloc[-1])
+            volume = float(df['Volume'].iloc[-1])
+            close_lag1 = float(df['Close'].iloc[-2]) # Dünkü kapanış
+            ma_5 = float(df['Close'].tail(5).mean())   # Son 5 günün hareketli ortalaması
+
+            # Metrikleri Ekran Göster
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Açılış", f"{open_price:.2f}")
+            col2.metric("Hacim", f"{volume:,.0f}")
+            col3.metric("Dünkü Kapanış", f"{close_lag1:.2f}")
+            col4.metric("5 Günlük MA", f"{ma_5:.2f}")
+
+            # Backend API İstek Payload'ı
+            payload = {
+                "Open": open_price,
+                "Volume": volume,
+                "Close_Lag1": close_lag1,
+                "MA_5": ma_5
+            }
+
+            # FastAPI'ye İstek At
+            response = requests.post(f"{BACKEND_URL}/tahmin", json=payload)
+
+            if response.status_code == 200:
+                result = response.json()
+                tahmin = result.get("tahmin_edilen_getiri_yuzdesi")
+                st.success(f"**Tahmin Edilen Gelecek Getiri:** %{tahmin}")
+                st.caption(f"Log ID: {result.get('log_id')}")
+            else:
+                st.error("Backend API hatası oluştu.")
+
     except Exception as e:
-        st.error(f"Loglar getirilemedi: {e}")
+        st.error(f"Veri çekilirken hata oluştu: {str(e)}")
