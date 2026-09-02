@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 import os
-import yfinance as yf
+import pandas_datareader.data as web
 import pandas as pd
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
@@ -9,41 +9,32 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
 st.write("Canlı veri akışı ve MLflow entegreli tahmin sistemi.")
 
-# --- YAHOO FINANCE RATE LIMIT ABSOLUTE FIX ---
-@st.cache_data(ttl=1800, show_spinner=False)  # Veriyi 30 dakika hafızada tutar
-def fetch_stock_history(ticker_symbol):
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5'
-    })
-    
-    # yf.Ticker yerine doğrudan session destekleyen yf.download kullanımı
-    df = yf.download(
-        tickers=ticker_symbol,
-        period="15d",
-        interval="1d",
-        session=session,
-        progress=False
-    )
-    
-    # Çift seviyeli kolon başlığı hatasını düzeltme (MultiIndex Fix)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-        
-    return df
-# ---------------------------------------------
+# --- STOOQ DATA FETCH (Rate Limit Olmayan Kesin Çözüm) ---
+@st.cache_data(ttl=900)
+def fetch_stock_history_stooq(ticker_symbol):
+    # Stooq formatına çevirim (THYAO.IS -> THYAO.TR, AAPL -> AAPL.US)
+    symbol = ticker_symbol.upper()
+    if symbol.endswith(".IS"):
+        stooq_symbol = symbol.replace(".IS", ".TR")
+    elif "." not in symbol:
+        stooq_symbol = f"{symbol}.US"
+    else:
+        stooq_symbol = symbol
 
-# 1. Kullanıcıdan Hisse Kodu Al
+    # Stooq üzerinden son verileri çekme
+    df = web.DataReader(stooq_symbol, 'stooq')
+    df = df.sort_index()  # Tarihleri eskiden yeniye sırala
+    return df
+# --------------------------------------------------------
+
 ticker = st.text_input("Hisse Sembolü Giriniz (Örn: THYAO.IS, AAPL, MSFT):", value="THYAO.IS")
 
 if st.button("Canlı Veri Çek ve Tahmin Et"):
     try:
-        df = fetch_stock_history(ticker)
+        df = fetch_stock_history_stooq(ticker)
 
         if df.empty or len(df) < 5:
-            st.error("Yeterli geçmiş veri bulunamadı veya Yahoo geçici yanıt vermiyor.")
+            st.error("Yeterli geçmiş veri bulunamadı.")
         else:
             # Feature Engineering
             open_price = float(df['Open'].iloc[-1])
