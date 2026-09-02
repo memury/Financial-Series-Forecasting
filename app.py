@@ -2,29 +2,32 @@ import streamlit as st
 import requests
 import os
 import pandas as pd
+from io import StringIO
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
 st.write("Canlı veri akışı ve MLflow entegreli tahmin sistemi.")
 
-# --- DIRECT STOOQ CSV FETCH (Otomatik .US Ekini Engeller) ---
-@st.cache_data(ttl=900)
-def fetch_stock_history_stooq(ticker_symbol):
-    symbol = ticker_symbol.strip().upper()
+# --- YAHOO DIRECT CSV ENDPOINT (RATE LIMIT & 404 BYPASS) ---
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_stock_history_direct(ticker_symbol):
+    # Türkçe 'ı/I' karakterlerini İngilizce 'i/I' yap ve temizle
+    clean_symbol = ticker_symbol.strip().replace('ı', 'i').replace('I', 'i').upper()
     
-    # Sembol dönüşüm kontrolü
-    if symbol.endswith(".IS"):
-        stooq_symbol = symbol.replace(".IS", ".TR")
-    elif "." not in symbol:
-        stooq_symbol = f"{symbol}.US"
-    else:
-        stooq_symbol = symbol
+    # Yahoo Direct CSV Endpoint (10 günlük veri)
+    url = f"https://query1.finance.yahoo.com/v7/finance/download/{clean_symbol}?range=10d&interval=1d&events=history"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code != 200 or "404 Not Found" in response.text:
+        return pd.DataFrame()
 
-    # Stooq CSV Endpoint'ine doğrudan bağlanıyoruz
-    url = f"https://stooq.com/q/d/l/?s={stooq_symbol.lower()}&i=d"
-    
-    df = pd.read_csv(url)
+    df = pd.read_csv(StringIO(response.text))
     
     if df.empty or 'Date' not in df.columns:
         return pd.DataFrame()
@@ -34,14 +37,20 @@ def fetch_stock_history_stooq(ticker_symbol):
     return df
 # ------------------------------------------------------------
 
+# 1. Kullanıcıdan Hisse Kodu Al
 ticker = st.text_input("Hisse Sembolü Giriniz (Örn: THYAO.IS, AAPL, MSFT):", value="THYAO.IS")
+
+# Önbellek temizleme seçeneği
+if st.sidebar.button("Önbelleği Temizle"):
+    st.cache_data.clear()
+    st.success("Önbellek temizlendi!")
 
 if st.button("Canlı Veri Çek ve Tahmin Et"):
     try:
-        df = fetch_stock_history_stooq(ticker)
+        df = fetch_stock_history_direct(ticker)
 
         if df.empty or len(df) < 5:
-            st.error("Yeterli geçmiş veri bulunamadı veya Stooq geçici yanıt veremiyor.")
+            st.error("Yeterli geçmiş veri bulunamadı veya sembol geçersiz. Lütfen sembolü kontrol edin.")
         else:
             # Feature Engineering
             open_price = float(df['Open'].iloc[-1])
