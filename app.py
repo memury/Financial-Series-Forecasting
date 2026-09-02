@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import os
-import pandas_datareader.data as web
 import pandas as pd
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
@@ -9,11 +8,12 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
 st.write("Canlı veri akışı ve MLflow entegreli tahmin sistemi.")
 
-# --- STOOQ DATA FETCH (Rate Limit Olmayan Kesin Çözüm) ---
+# --- DIRECT STOOQ CSV FETCH (Otomatik .US Ekini Engeller) ---
 @st.cache_data(ttl=900)
 def fetch_stock_history_stooq(ticker_symbol):
-    # Stooq formatına çevirim (THYAO.IS -> THYAO.TR, AAPL -> AAPL.US)
-    symbol = ticker_symbol.upper()
+    symbol = ticker_symbol.strip().upper()
+    
+    # Sembol dönüşüm kontrolü
     if symbol.endswith(".IS"):
         stooq_symbol = symbol.replace(".IS", ".TR")
     elif "." not in symbol:
@@ -21,11 +21,18 @@ def fetch_stock_history_stooq(ticker_symbol):
     else:
         stooq_symbol = symbol
 
-    # Stooq üzerinden son verileri çekme
-    df = web.DataReader(stooq_symbol, 'stooq')
-    df = df.sort_index()  # Tarihleri eskiden yeniye sırala
+    # Stooq CSV Endpoint'ine doğrudan bağlanıyoruz
+    url = f"https://stooq.com/q/d/l/?s={stooq_symbol.lower()}&i=d"
+    
+    df = pd.read_csv(url)
+    
+    if df.empty or 'Date' not in df.columns:
+        return pd.DataFrame()
+
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.sort_values('Date').reset_index(drop=True)
     return df
-# --------------------------------------------------------
+# ------------------------------------------------------------
 
 ticker = st.text_input("Hisse Sembolü Giriniz (Örn: THYAO.IS, AAPL, MSFT):", value="THYAO.IS")
 
@@ -34,7 +41,7 @@ if st.button("Canlı Veri Çek ve Tahmin Et"):
         df = fetch_stock_history_stooq(ticker)
 
         if df.empty or len(df) < 5:
-            st.error("Yeterli geçmiş veri bulunamadı.")
+            st.error("Yeterli geçmiş veri bulunamadı veya Stooq geçici yanıt veremiyor.")
         else:
             # Feature Engineering
             open_price = float(df['Open'].iloc[-1])
