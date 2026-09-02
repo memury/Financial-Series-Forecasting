@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import os
 
+# Backend URL sanitization (Sonundaki fazladan '/' karakterlerini temizler)
 RAW_BACKEND_URL = os.getenv("BACKEND_URL", "https://financial-series-forecasting.onrender.com")
 BACKEND_URL = RAW_BACKEND_URL.rstrip("/")
 
@@ -9,7 +10,7 @@ st.set_page_config(page_title="Borsa MLOps SaaS", layout="wide")
 st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
 st.caption("Esnek Veri Girdi Motoru ve MLflow Çıkarım Arayüzü")
 
-# Hazır Piyasa Senaryoları / Varsayılan Veriler
+# Hazır Piyasa Senaryoları
 PRESETS = {
     "THYAO (Güncel Örnek Veri)": {"open": 302.50, "volume": 45000000, "close_lag1": 298.00, "ma_5": 300.20},
     "GARAN (Güncel Örnek Veri)": {"open": 112.00, "volume": 32000000, "close_lag1": 110.50, "ma_5": 111.10},
@@ -22,7 +23,6 @@ selected_preset = st.sidebar.selectbox("Bir Hisse Senaryosu Seçin:", list(PRESE
 default_data = PRESETS[selected_preset]
 
 st.subheader("📊 Hisse Metrikleri")
-st.write("Aşağıdaki değerleri güncel borsa verilerinize göre ayarlayabilir veya hazır senaryoyu kullanabilirsiniz:")
 
 col1, col2 = st.columns(2)
 
@@ -44,9 +44,12 @@ if st.button("🚀 Model Tahminini Çalıştır"):
         "MA_5": float(ma_5)
     }
 
+    # Doğrudan sanitized BACKEND_URL/tahmin adresine POST atılır
+    target_endpoint = f"{BACKEND_URL}/tahmin"
+
     with st.spinner("FastAPI Backend üzerinden model çıkarımı yapılıyor..."):
         try:
-            response = requests.post(f"{BACKEND_URL}/tahmin", json=payload, timeout=10)
+            response = requests.post(target_endpoint, json=payload, timeout=10)
 
             if response.status_code == 200:
                 result = response.json()
@@ -54,10 +57,10 @@ if st.button("🚀 Model Tahminini Çalıştır"):
                 log_id = result.get("log_id")
 
                 st.success(f"🎯 **Tahmin Edilen Gelecek Getiri:** %{tahmin}")
-                st.info(f"📝 **MLOps Log ID:** `{log_id}` (Veritabanına ve MLflow kaydına işlendi)")
+                st.info(f"📝 **MLOps Log ID:** `{log_id}`")
             else:
                 st.error(f"Backend API Hatası! Status Code: {response.status_code}")
-                st.code(response.text)
+                st.code(f"Hedef URL: {target_endpoint}\nYanıt: {response.text}")
 
         except Exception as e:
             st.error(f"Bağlantı Hatası: {str(e)}")
