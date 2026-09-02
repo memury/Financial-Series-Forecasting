@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import os
-import yfinance as yf
 import pandas as pd
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
@@ -9,30 +8,42 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
 st.write("Canlı veri akışı ve MLflow entegreli tahmin sistemi.")
 
-# --- KESİN RECOVERY DATA FETCH (yfinance Session Injection) ---
+# --- DIRECT YAHOO V8 CHART API (Rate Limit & WAF Bypass) ---
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_stock_history_safe(ticker_symbol):
     clean_symbol = ticker_symbol.strip().replace('ı', 'i').replace('I', 'i').upper()
     
-    # Custom Session Oluşturma (User-Agent ile WAF bypass)
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    })
+    # Direct Yahoo v8 Chart API URL
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{clean_symbol}?range=1mo&interval=1d"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Referer': 'https://finance.yahoo.com'
+    }
     
     try:
-        ticker_obj = yf.Ticker(clean_symbol, session=session)
-        df = ticker_obj.history(period="1mo", interval="1d")
+        response = requests.get(url, headers=headers, timeout=10)
         
-        if df.empty:
-            df = yf.download(clean_symbol, period="1mo", interval="1d", session=session, progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-
-        df = df.reset_index()
+        if response.status_code != 200:
+            st.error(f"API Yanıt Hatası: Status {response.status_code}")
+            return pd.DataFrame()
+            
+        data = response.json()
+        result = data['chart']['result'][0]
+        timestamps = result['timestamp']
+        indicators = result['indicators']['quote'][0]
+        
+        df = pd.DataFrame({
+            'Date': pd.to_datetime(timestamps, unit='s'),
+            'Open': indicators['open'],
+            'Close': indicators['close'],
+            'Volume': indicators['volume']
+        }).dropna()
+        
         return df
     except Exception as e:
-        st.error(f"Detaylı Hata Akışı: {str(e)}")
+        st.error(f"Veri Ayrıştırma Hatası: {str(e)}")
         return pd.DataFrame()
 # -----------------------------------------------------------------
 
