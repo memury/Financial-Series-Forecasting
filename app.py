@@ -2,10 +2,6 @@ import streamlit as st
 import requests
 import os
 
-# Backend URL sanitization (Sonundaki fazladan '/' karakterlerini temizler)
-RAW_BACKEND_URL = os.getenv("BACKEND_URL", "https://financial-series-forecasting.onrender.com")
-BACKEND_URL = RAW_BACKEND_URL.rstrip("/")
-
 st.set_page_config(page_title="Borsa MLOps SaaS", layout="wide")
 st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
 st.caption("Esnek Veri Girdi Motoru ve MLflow Çıkarım Arayüzü")
@@ -44,12 +40,12 @@ if st.button("🚀 Model Tahminini Çalıştır"):
         "MA_5": float(ma_5)
     }
 
-    # Doğrudan sanitized BACKEND_URL/tahmin adresine POST atılır
-    target_endpoint = f"{BACKEND_URL}/tahmin"
+    # URL Birleştirme Hatasını %100 Önleyen Statik Endpoint Adresi
+    target_endpoint = "https://financial-series-forecasting.onrender.com/tahmin"
 
     with st.spinner("FastAPI Backend üzerinden model çıkarımı yapılıyor..."):
         try:
-            response = requests.post(target_endpoint, json=payload, timeout=10)
+            response = requests.post(target_endpoint, json=payload, timeout=15)
 
             if response.status_code == 200:
                 result = response.json()
