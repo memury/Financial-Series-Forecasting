@@ -4,7 +4,12 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 
 # SQLite veritabanı bağlantısı (Render/Local uyumlu)
-SQLALCHEMY_DATABASE_URL = "sqlite:///./predictions.db"
+# YENİ VE TAM YOL (ABSOLUTE PATH) BAĞLANTI SATIRLARI:
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "predictions.db")
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

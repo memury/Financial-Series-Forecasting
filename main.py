@@ -1,32 +1,41 @@
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel
-import joblib
-import numpy as np
+import pandas as pd
+import mlflow.sklearn
 from sqlalchemy.orm import Session
-from database import get_db, PredictionLog
+from database import get_db, PredictionLog, engine, Base 
 
-# 1. FastAPI Uygulaması
-app = FastAPI(title="Borsa Getiri Tahmin API")
+# Veritabanı Tabloları
+Base.metadata.create_all(bind=engine)
 
-# 2. Modeli Yükle
-model = joblib.load("borsa_modeli.pkl")
+app = FastAPI(title="Borsa Getiri Tahmin API (MLflow)")
 
-# 3. Girdi Şablonu
+# --- DEĞİŞEN KISIM: Modeli MLflow Havuzundan Yüklüyoruz ---
+MODEL_URI = "models:/BorsaModeli/1"
+model = mlflow.sklearn.load_model(MODEL_URI)
+# ---------------------------------------------------------
+
 class BorsaGirdileri(BaseModel):
     Open: float
     Volume: float
     Close_Lag1: float
     MA_5: float
 
-# 4. Tahmin Endpoint'i (Veritabanı Entegreli)
 @app.post("/tahmin")
 def tahmin_et(veri: BorsaGirdileri, db: Session = Depends(get_db)):
-    # Model Tahmini
-    girdi_dizisi = np.array([[veri.Open, veri.Volume, veri.Close_Lag1, veri.MA_5]])
-    tahmin = model.predict(girdi_dizisi)[0]
+    # Girdiyi DataFrame'e çeviriyoruz
+    girdi_df = pd.DataFrame([{
+        "Open": veri.Open,
+        "Volume": veri.Volume,
+        "Close_Lag1": veri.Close_Lag1,
+        "MA_5": veri.MA_5
+    }])
+    
+    # MLflow'dan gelen modelle tahmin
+    tahmin = model.predict(girdi_df)[0]
     tahmin_yuzdesi = round(float(tahmin), 4)
 
-    # Veritabanına İstek ve Tahmin Kaydı
+    # Veritabanına Kayıt
     log_entry = PredictionLog(
         open_price=veri.Open,
         volume=veri.Volume,
