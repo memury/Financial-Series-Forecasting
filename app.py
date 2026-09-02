@@ -2,36 +2,38 @@ import streamlit as st
 import requests
 import os
 import pandas as pd
+from io import StringIO
 
-# 405 Hatasını önlemek için URL sonundaki '/' temizleniyor
 RAW_BACKEND_URL = os.getenv("BACKEND_URL", "https://financial-series-forecasting.onrender.com")
 BACKEND_URL = RAW_BACKEND_URL.rstrip("/")
 
 st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
 st.write("Canlı veri akışı ve MLflow entegreli tahmin sistemi.")
 
-# --- GERÇEK ZAMANLI BIST DATA ENGINE ---
-@st.cache_data(ttl=30, show_spinner=False)
-def fetch_real_market_data(ticker_symbol):
-    clean_symbol = ticker_symbol.strip().replace('ı', 'i').replace('I', 'i').upper()
+# --- AUTO-TRANSLATING STOOQ ENGINE ---
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_bist_data_stooq(ticker_symbol):
+    clean_symbol = ticker_symbol.strip().upper()
     
-    # Direct Yahoo v8 Chart API (Gerçek Zamanlı Piyasa Fiyatı)
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{clean_symbol}?range=5d&interval=1d"
+    # BIST Hisseleri için Otomatik Sembol Çevirici (.IS -> .TR)
+    if clean_symbol.endswith(".IS"):
+        stooq_symbol = clean_symbol.replace(".IS", ".TR").lower()
+    elif not "." in clean_symbol and clean_symbol not in ["AAPL", "MSFT", "TSLA", "NVDA", "AMZN"]:
+        stooq_symbol = f"{clean_symbol}.tr".lower()
+    else:
+        stooq_symbol = clean_symbol.lower()
+    
+    url = f"https://stooq.com/q/d/l/?s={stooq_symbol}&i=d"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
     try:
-        res = requests.get(url, headers=headers, timeout=8)
-        if res.status_code == 200:
-            data = res.json()['chart']['result'][0]
-            quote = data['indicators']['quote'][0]
-            
-            df = pd.DataFrame({
-                'Open': quote['open'],
-                'Close': quote['close'],
-                'Volume': quote['volume']
-            }).dropna()
-            
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200 and "Date,Open,High,Low,Close" in res.text:
+            df = pd.read_csv(StringIO(res.text))
+            df = df.dropna()
             if len(df) >= 2:
+                # En güncel tarih en alta gelecek şekilde sırala
+                df = df.iloc[::-1].reset_index(drop=True)
                 return df
     except Exception:
         pass
@@ -47,10 +49,10 @@ if st.sidebar.button("Önbelleği Temizle"):
 
 if st.button("Canlı Veri Çek ve Tahmin Et"):
     try:
-        df = fetch_real_market_data(ticker)
+        df = fetch_bist_data_stooq(ticker)
 
         if df.empty or len(df) < 2:
-            st.error("Gerçek piyasa verisi çekilemedi. Sembolü kontrol edip sol menüden önbelleği temizleyin.")
+            st.error("Veri çekilemedi. Lütfen sembolü kontrol edin veya sol menüden 'Önbelleği Temizle' butonuna basın.")
         else:
             open_price = float(df['Open'].iloc[-1])
             volume = float(df['Volume'].iloc[-1])
@@ -70,7 +72,6 @@ if st.button("Canlı Veri Çek ve Tahmin Et"):
                 "MA_5": ma_5
             }
 
-            # /tahmin uç noktasına temiz URL ile POST atılıyor
             response = requests.post(f"{BACKEND_URL}/tahmin", json=payload, timeout=10)
 
             if response.status_code == 200:
