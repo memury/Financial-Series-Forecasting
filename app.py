@@ -7,18 +7,19 @@ from io import StringIO
 RAW_BACKEND_URL = os.getenv("BACKEND_URL", "https://financial-series-forecasting.onrender.com")
 BACKEND_URL = RAW_BACKEND_URL.rstrip("/")
 
+st.set_page_config(page_title="Borsa MLOps SaaS", layout="wide")
 st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
-st.write("Canlı veri akışı ve MLflow entegreli tahmin sistemi.")
+st.caption("Gün Sonu (EOD) Otomatik Veri Entegrasyonu ve Model Çıkarım Arayüzü")
 
-# --- AUTO-TRANSLATING STOOQ ENGINE ---
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_bist_data_stooq(ticker_symbol):
+# --- GÜN SONU (EOD) RESILIENT DATA ENGINE ---
+@st.cache_data(ttl=3600, show_spinner=False) # Gün sonu verisi olduğu için 1 saat önbellekte tutulur
+def fetch_eod_market_data(ticker_symbol):
     clean_symbol = ticker_symbol.strip().upper()
     
-    # BIST Hisseleri için Otomatik Sembol Çevirici (.IS -> .TR)
+    # BIST (.IS -> .TR) & Yabancı Borsa Dönüştürücü
     if clean_symbol.endswith(".IS"):
         stooq_symbol = clean_symbol.replace(".IS", ".TR").lower()
-    elif not "." in clean_symbol and clean_symbol not in ["AAPL", "MSFT", "TSLA", "NVDA", "AMZN"]:
+    elif "." not in clean_symbol and clean_symbol not in ["AAPL", "MSFT", "TSLA", "NVDA", "AMZN"]:
         stooq_symbol = f"{clean_symbol}.tr".lower()
     else:
         stooq_symbol = clean_symbol.lower()
@@ -31,39 +32,44 @@ def fetch_bist_data_stooq(ticker_symbol):
         if res.status_code == 200 and "Date,Open,High,Low,Close" in res.text:
             df = pd.read_csv(StringIO(res.text))
             df = df.dropna()
-            if len(df) >= 2:
-                # En güncel tarih en alta gelecek şekilde sırala
+            if len(df) >= 5:
+                # Veriyi kronolojik sıraya al (En eski -> En yeni)
                 df = df.iloc[::-1].reset_index(drop=True)
-                return df
-    except Exception:
-        pass
+                return df, None
+    except Exception as e:
+        return pd.DataFrame(), str(e)
         
-    return pd.DataFrame()
+    return pd.DataFrame(), "Veri kümesi boş döndü veya sembol bulunamadı."
 # -----------------------------------------------------------------
 
-ticker = st.text_input("Hisse Sembolü Giriniz (Örn: THYAO.IS, AAPL, MSFT):", value="THYAO.IS")
+ticker = st.text_input("Hisse Sembolü (Örn: THYAO.IS, GARAN.IS, AAPL):", value="THYAO.IS")
 
 if st.sidebar.button("Önbelleği Temizle"):
     st.cache_data.clear()
-    st.success("Önbellek temizlendi!")
+    st.success("Gün sonu verileri temizlendi!")
 
-if st.button("Canlı Veri Çek ve Tahmin Et"):
-    try:
-        df = fetch_bist_data_stooq(ticker)
+if st.button("Gün Sonu Verilerini Çek ve Tahmin Et"):
+    with st.spinner("Gün sonu borsa verileri işleniyor..."):
+        df, err = fetch_eod_market_data(ticker)
 
-        if df.empty or len(df) < 2:
-            st.error("Veri çekilemedi. Lütfen sembolü kontrol edin veya sol menüden 'Önbelleği Temizle' butonuna basın.")
+        if df.empty or len(df) < 5:
+            st.error(f"Gün sonu verisi alınamadı: {err}")
         else:
+            # En son günün (EOD) değerleri
+            last_date = str(df['Date'].iloc[-1])
             open_price = float(df['Open'].iloc[-1])
+            close_price = float(df['Close'].iloc[-1])
             volume = float(df['Volume'].iloc[-1])
             close_lag1 = float(df['Close'].iloc[-2])
             ma_5 = float(df['Close'].tail(5).mean())
 
+            st.info(f"🗓️ **Son Güncelleme Tarihi (EOD):** {last_date}")
+
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Açılış (TL)", f"{open_price:.2f}")
-            col2.metric("Hacim", f"{volume:,.0f}")
-            col3.metric("Dünkü Kapanış", f"{close_lag1:.2f}")
-            col4.metric("5 Günlük MA", f"{ma_5:.2f}")
+            col1.metric("Açılış", f"{open_price:.2f} TL")
+            col2.metric("Son Kapanış", f"{close_price:.2f} TL")
+            col3.metric("Önceki Kapanış", f"{close_lag1:.2f} TL")
+            col4.metric("5 Günlük MA", f"{ma_5:.2f} TL")
 
             payload = {
                 "Open": open_price,
@@ -77,10 +83,7 @@ if st.button("Canlı Veri Çek ve Tahmin Et"):
             if response.status_code == 200:
                 result = response.json()
                 tahmin = result.get("tahmin_edilen_getiri_yuzdesi")
-                st.success(f"**Tahmin Edilen Gelecek Getiri:** %{tahmin}")
+                st.success(f"🎯 **Gelecek Seans Tahmin Edilen Getiri:** %{tahmin}")
                 st.caption(f"Log ID: {result.get('log_id')}")
             else:
-                st.error(f"Backend API hatası oluştu. Status Code: {response.status_code}")
-
-    except Exception as e:
-        st.error(f"Uygulama hatası: {str(e)}")
+                st.error(f"Backend API Hatası. Status Code: {response.status_code}")
