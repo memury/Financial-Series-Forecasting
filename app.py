@@ -1,89 +1,63 @@
 import streamlit as st
 import requests
 import os
-import pandas as pd
-from io import StringIO
 
 RAW_BACKEND_URL = os.getenv("BACKEND_URL", "https://financial-series-forecasting.onrender.com")
 BACKEND_URL = RAW_BACKEND_URL.rstrip("/")
 
 st.set_page_config(page_title="Borsa MLOps SaaS", layout="wide")
 st.title("📈 Borsa Getiri Tahmin & MLOps SaaS")
-st.caption("Gün Sonu (EOD) Otomatik Veri Entegrasyonu ve Model Çıkarım Arayüzü")
+st.caption("Esnek Veri Girdi Motoru ve MLflow Çıkarım Arayüzü")
 
-# --- GÜN SONU (EOD) RESILIENT DATA ENGINE ---
-@st.cache_data(ttl=3600, show_spinner=False) # Gün sonu verisi olduğu için 1 saat önbellekte tutulur
-def fetch_eod_market_data(ticker_symbol):
-    clean_symbol = ticker_symbol.strip().upper()
-    
-    # BIST (.IS -> .TR) & Yabancı Borsa Dönüştürücü
-    if clean_symbol.endswith(".IS"):
-        stooq_symbol = clean_symbol.replace(".IS", ".TR").lower()
-    elif "." not in clean_symbol and clean_symbol not in ["AAPL", "MSFT", "TSLA", "NVDA", "AMZN"]:
-        stooq_symbol = f"{clean_symbol}.tr".lower()
-    else:
-        stooq_symbol = clean_symbol.lower()
-    
-    url = f"https://stooq.com/q/d/l/?s={stooq_symbol}&i=d"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200 and "Date,Open,High,Low,Close" in res.text:
-            df = pd.read_csv(StringIO(res.text))
-            df = df.dropna()
-            if len(df) >= 5:
-                # Veriyi kronolojik sıraya al (En eski -> En yeni)
-                df = df.iloc[::-1].reset_index(drop=True)
-                return df, None
-    except Exception as e:
-        return pd.DataFrame(), str(e)
-        
-    return pd.DataFrame(), "Veri kümesi boş döndü veya sembol bulunamadı."
-# -----------------------------------------------------------------
+# Hazır Piyasa Senaryoları / Varsayılan Veriler
+PRESETS = {
+    "THYAO (Güncel Örnek Veri)": {"open": 302.50, "volume": 45000000, "close_lag1": 298.00, "ma_5": 300.20},
+    "GARAN (Güncel Örnek Veri)": {"open": 112.00, "volume": 32000000, "close_lag1": 110.50, "ma_5": 111.10},
+    "Özel / Manuel Giriş": {"open": 100.00, "volume": 10000000, "close_lag1": 98.50, "ma_5": 99.00}
+}
 
-ticker = st.text_input("Hisse Sembolü (Örn: THYAO.IS, GARAN.IS, AAPL):", value="THYAO.IS")
+st.sidebar.header("⚙️ Veri Giriş Modu")
+selected_preset = st.sidebar.selectbox("Bir Hisse Senaryosu Seçin:", list(PRESETS.keys()))
 
-if st.sidebar.button("Önbelleği Temizle"):
-    st.cache_data.clear()
-    st.success("Gün sonu verileri temizlendi!")
+default_data = PRESETS[selected_preset]
 
-if st.button("Gün Sonu Verilerini Çek ve Tahmin Et"):
-    with st.spinner("Gün sonu borsa verileri işleniyor..."):
-        df, err = fetch_eod_market_data(ticker)
+st.subheader("📊 Hisse Metrikleri")
+st.write("Aşağıdaki değerleri güncel borsa verilerinize göre ayarlayabilir veya hazır senaryoyu kullanabilirsiniz:")
 
-        if df.empty or len(df) < 5:
-            st.error(f"Gün sonu verisi alınamadı: {err}")
-        else:
-            # En son günün (EOD) değerleri
-            last_date = str(df['Date'].iloc[-1])
-            open_price = float(df['Open'].iloc[-1])
-            close_price = float(df['Close'].iloc[-1])
-            volume = float(df['Volume'].iloc[-1])
-            close_lag1 = float(df['Close'].iloc[-2])
-            ma_5 = float(df['Close'].tail(5).mean())
+col1, col2 = st.columns(2)
 
-            st.info(f"🗓️ **Son Güncelleme Tarihi (EOD):** {last_date}")
+with col1:
+    open_price = st.number_input("Açılış Fiyatı (TL):", value=default_data["open"], step=0.5, format="%.2f")
+    volume = st.number_input("İşlem Hacmi:", value=int(default_data["volume"]), step=1000000)
 
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Açılış", f"{open_price:.2f} TL")
-            col2.metric("Son Kapanış", f"{close_price:.2f} TL")
-            col3.metric("Önceki Kapanış", f"{close_lag1:.2f} TL")
-            col4.metric("5 Günlük MA", f"{ma_5:.2f} TL")
+with col2:
+    close_lag1 = st.number_input("Önceki Gün Kapanış Fiyatı (TL):", value=default_data["close_lag1"], step=0.5, format="%.2f")
+    ma_5 = st.number_input("5 Günlük Hareketli Ortalama (MA_5):", value=default_data["ma_5"], step=0.5, format="%.2f")
 
-            payload = {
-                "Open": open_price,
-                "Volume": volume,
-                "Close_Lag1": close_lag1,
-                "MA_5": ma_5
-            }
+st.markdown("---")
 
+if st.button("🚀 Model Tahminini Çalıştır"):
+    payload = {
+        "Open": float(open_price),
+        "Volume": float(volume),
+        "Close_Lag1": float(close_lag1),
+        "MA_5": float(ma_5)
+    }
+
+    with st.spinner("FastAPI Backend üzerinden model çıkarımı yapılıyor..."):
+        try:
             response = requests.post(f"{BACKEND_URL}/tahmin", json=payload, timeout=10)
 
             if response.status_code == 200:
                 result = response.json()
                 tahmin = result.get("tahmin_edilen_getiri_yuzdesi")
-                st.success(f"🎯 **Gelecek Seans Tahmin Edilen Getiri:** %{tahmin}")
-                st.caption(f"Log ID: {result.get('log_id')}")
+                log_id = result.get("log_id")
+
+                st.success(f"🎯 **Tahmin Edilen Gelecek Getiri:** %{tahmin}")
+                st.info(f"📝 **MLOps Log ID:** `{log_id}` (Veritabanına ve MLflow kaydına işlendi)")
             else:
-                st.error(f"Backend API Hatası. Status Code: {response.status_code}")
+                st.error(f"Backend API Hatası! Status Code: {response.status_code}")
+                st.code(response.text)
+
+        except Exception as e:
+            st.error(f"Bağlantı Hatası: {str(e)}")
